@@ -1,117 +1,186 @@
 const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
+const axios = require('axios');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
-// Security and logging middleware
-app.use(helmet());
-app.use(cors());
-app.use(morgan('combined'));
-
-// Body parsing middleware
+// Middleware
+app.use(express.static('public'));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Health check endpoint (required for cloud deployments)
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy',
-    service: 'zenwebapi123',
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString(),
-    database: process.env.DB_NAME ? 'configured' : 'not configured'
-  });
-});
-
-// Database connection info endpoint (if database is configured)
-app.get('/db-info', (req, res) => {
-  if (!process.env.DB_NAME) {
-    return res.json({ message: 'No database configured' });
-  }
-  
-  res.json({
-    database: process.env.DB_NAME || 'not set',
-    user: process.env.DB_USER || 'not set',
-    instance: process.env.DB_INSTANCE || 'not set',
-    status: 'Database environment variables configured'
-  });
-});
-
-// ========================================
-// YOUR APPLICATION CODE STARTS HERE
-// ========================================
-
-// Basic welcome endpoint - Replace this with your actual API endpoints
+// Serve the main page
 app.get('/', (req, res) => {
-  res.json({
-    message: 'Welcome to zenwebapi123!',
-    description: 'My test app',
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    endpoints: {
-      health: '/health',
-      docs: '/api/docs', // Add your documentation endpoint
-      api: '/api'
-    }
-  });
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Example API endpoints - Replace with your actual endpoints
-app.get('/api', (req, res) => {
-  res.json({
-    message: 'API is running',
-    service: 'zenwebapi123',
-    version: '1.0.0',
-    availableEndpoints: [
-      'GET /api/example',
-      // Add your endpoints here
-    ]
-  });
-});
-
-app.get('/api/example', (req, res) => {
-  res.json({
-    message: 'This is an example endpoint',
-    service: 'zenwebapi123',
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
-    data: {
-      // Add your data structure here
-      example: 'Replace this with your actual data'
+    service: 'Weather GUI App',
+    version: '1.0.0'
+  });
+});
+
+// API endpoint to get current weather
+app.get('/api/weather/:city', async (req, res) => {
+  try {
+    const { city } = req.params;
+    const apiKey = process.env.OPENWEATHER_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({
+        error: 'API key not configured',
+        message: 'Please set OPENWEATHER_API_KEY environment variable'
+      });
     }
-  });
+
+    const response = await axios.get(
+      `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric`
+    );
+
+    const weatherData = {
+      city: response.data.name,
+      country: response.data.sys.country,
+      temperature: {
+        current: Math.round(response.data.main.temp),
+        feels_like: Math.round(response.data.main.feels_like),
+        min: Math.round(response.data.main.temp_min),
+        max: Math.round(response.data.main.temp_max)
+      },
+      humidity: response.data.main.humidity,
+      pressure: response.data.main.pressure,
+      visibility: response.data.visibility ? Math.round(response.data.visibility / 1000) : null,
+      weather: {
+        main: response.data.weather[0].main,
+        description: response.data.weather[0].description,
+        icon: response.data.weather[0].icon
+      },
+      wind: {
+        speed: Math.round(response.data.wind.speed * 3.6), // Convert m/s to km/h
+        direction: response.data.wind.deg
+      },
+      sunrise: new Date(response.data.sys.sunrise * 1000).toLocaleTimeString(),
+      sunset: new Date(response.data.sys.sunset * 1000).toLocaleTimeString(),
+      timestamp: new Date().toISOString()
+    };
+
+    res.json(weatherData);
+  } catch (error) {
+    console.error('Weather API Error:', error.message);
+    
+    if (error.response?.status === 404) {
+      res.status(404).json({
+        error: 'City not found',
+        message: `Could not find weather data for city: ${req.params.city}`
+      });
+    } else if (error.response?.status === 401) {
+      res.status(401).json({
+        error: 'Invalid API key',
+        message: 'Please check your OpenWeatherMap API key'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Internal server error',
+        message: 'Failed to fetch weather data'
+      });
+    }
+  }
 });
 
-// ========================================
-// YOUR APPLICATION CODE ENDS HERE
-// ========================================
+// API endpoint to get 5-day forecast
+app.get('/api/forecast/:city', async (req, res) => {
+  try {
+    const { city } = req.params;
+    const apiKey = process.env.OPENWEATHER_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({
+        error: 'API key not configured',
+        message: 'Please set OPENWEATHER_API_KEY environment variable'
+      });
+    }
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Route ${req.originalUrl} not found`,
-    service: 'zenwebapi123'
-  });
+    const response = await axios.get(
+      `https://api.openweathermap.org/data/2.5/forecast?q=${city}&appid=${apiKey}&units=metric`
+    );
+
+    // Get daily forecasts (one per day at 12:00)
+    const dailyForecasts = response.data.list
+      .filter(item => item.dt_txt.includes('12:00:00'))
+      .slice(0, 5)
+      .map(item => ({
+        date: new Date(item.dt * 1000).toLocaleDateString(),
+        day: new Date(item.dt * 1000).toLocaleDateString('en-US', { weekday: 'short' }),
+        temperature: {
+          min: Math.round(item.main.temp_min),
+          max: Math.round(item.main.temp_max),
+          current: Math.round(item.main.temp)
+        },
+        weather: {
+          main: item.weather[0].main,
+          description: item.weather[0].description,
+          icon: item.weather[0].icon
+        },
+        humidity: item.main.humidity,
+        wind: Math.round(item.wind.speed * 3.6) // Convert to km/h
+      }));
+
+    res.json({
+      city: response.data.city.name,
+      country: response.data.city.country,
+      forecast: dailyForecasts,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Forecast API Error:', error.message);
+    
+    if (error.response?.status === 404) {
+      res.status(404).json({
+        error: 'City not found',
+        message: `Could not find forecast data for city: ${req.params.city}`
+      });
+    } else if (error.response?.status === 401) {
+      res.status(401).json({
+        error: 'Invalid API key',
+        message: 'Please check your OpenWeatherMap API key'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Internal server error',
+        message: 'Failed to fetch forecast data'
+      });
+    }
+  }
 });
 
-// Error handling middleware
+// Error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Unhandled error:', err);
   res.status(500).json({
-    error: 'Something went wrong!',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
-    service: 'zenwebapi123'
+    error: 'Internal server error',
+    message: 'Something went wrong!'
   });
 });
 
-app.listen(port, () => {
-  console.log('🚀 zenwebapi123 is running on port ' + port);
-  console.log('📊 Health check available at: http://localhost:' + port + '/health');
-  console.log('🌍 Environment: ' + (process.env.NODE_ENV || 'development'));
-  console.log('🔧 Deployment: GKE');
+// 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    error: 'API endpoint not found',
+    message: `API route ${req.originalUrl} not found`
+  });
 });
+
+// Start server only if not in test environment
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`🌤️  Weather GUI App running on port ${PORT}`);
+    console.log(`🌐 Open in browser: http://localhost:${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  });
+}
+
+module.exports = app;
