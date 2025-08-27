@@ -1,0 +1,22 @@
+
+# Database setup was not selected during template creation
+# This is a placeholder file to maintain GitHub Actions structure
+# To add database functionality later, regenerate the template with database enabled
+
+name: Database Setup (Disabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Database Not Configured
+        run: |
+          echo "ℹ️ Database was not configured during template creation"
+          echo "To enable database functionality:"
+          echo "1. Use the Backstage template again with 'Setup Database' enabled, OR"
+          echo "2. Manually configure your database infrastructure"
+          echo "3. Update this workflow with your database setup steps"
+
